@@ -54,7 +54,7 @@ import {
 } from '@heroicons/react/24/outline';
 
 type ViewType = 'panel' | 'salary' | 'settings' | 'tasks' | 'calendar' | 'messages';
-type SalaryTab = 'employees' | 'hours' | 'payroll';
+type SalaryTab = 'employees' | 'hours' | 'payroll' | 'costs';
 type UserRole = 'admin' | 'employee';
 
 // --- MESSAGING INTERFACES ---
@@ -192,6 +192,7 @@ const mapWorkLogToApp = (l: any): WorkLog => ({
     endTime: l.end_time || '00:00',
     breakMinutes: Number(l.break_minutes) || 0,
     netHours: Number(l.net_hours) || 0,
+    location: l.location || '',
     description: l.description || '',
     status: l.status || 'pending'
 });
@@ -388,8 +389,10 @@ const App: React.FC = () => {
   const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
   const [advances, setAdvances] = useState<Advance[]>([]);
   const [selectedSalaryDate, setSelectedSalaryDate] = useState(new Date());
-  const [payrollDate, setPayrollDate] = useState(new Date()); 
-  
+  const [payrollDate, setPayrollDate] = useState(new Date());
+  const [costsMonth, setCostsMonth] = useState<Date>(new Date());
+  const [costsStatusFilter, setCostsStatusFilter] = useState<'all' | 'approved'>('approved');
+
   const [officialPayrollHours, setOfficialPayrollHours] = useState<Record<string, number>>({});
 
   const [newEmployee, setNewEmployee] = useState<Partial<Employee>>({
@@ -1649,11 +1652,17 @@ const App: React.FC = () => {
                                 >
                                     <div className="flex items-center gap-2"><ClockIcon className="w-4 h-4"/> Saat Girişi</div>
                                 </button>
-                                <button 
+                                <button
                                     onClick={() => setActiveSalaryTab('payroll')}
                                     className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeSalaryTab === 'payroll' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
                                 >
                                     <div className="flex items-center gap-2"><BanknotesIcon className="w-4 h-4"/> Maaş Bordrosu</div>
+                                </button>
+                                <button
+                                    onClick={() => setActiveSalaryTab('costs')}
+                                    className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeSalaryTab === 'costs' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                                >
+                                    <div className="flex items-center gap-2"><ArrowTrendingUpIcon className="w-4 h-4"/> Maliyet Analizi</div>
                                 </button>
                             </div>
                         </div>
@@ -1963,6 +1972,226 @@ const App: React.FC = () => {
                                 </div>
                             </div>
                         )}
+
+                        {/* 4. COSTS TAB */}
+                        {activeSalaryTab === 'costs' && (() => {
+                            const costsMonthStr = `${costsMonth.getFullYear()}-${(costsMonth.getMonth() + 1).toString().padStart(2, '0')}`;
+                            const filteredLogs = workLogs.filter(l => {
+                                const monthMatch = l.date.substring(0, 7) === costsMonthStr;
+                                const statusMatch = costsStatusFilter === 'all' || l.status === 'approved';
+                                return monthMatch && statusMatch;
+                            });
+                            const logsWithCost = filteredLogs.map(l => {
+                                const emp = employees.find(e => e.id === l.employeeId);
+                                const rate = emp ? getHourlyRateForDate(emp, l.date) : 0;
+                                return { ...l, empName: emp?.name ?? 'Bilinmeyen', rate, cost: l.netHours * rate };
+                            });
+                            const totalCost = logsWithCost.reduce((s, l) => s + l.cost, 0);
+                            const totalHours = logsWithCost.reduce((s, l) => s + l.netHours, 0);
+                            const activeDays = new Set(logsWithCost.map(l => l.date));
+                            const avgCostPerDay = activeDays.size > 0 ? totalCost / activeDays.size : 0;
+                            const activeLocations = new Set(logsWithCost.map(l => l.location).filter(Boolean));
+
+                            const byDate: Record<string, typeof logsWithCost> = {};
+                            logsWithCost.forEach(l => { if (!byDate[l.date]) byDate[l.date] = []; byDate[l.date].push(l); });
+                            const sortedDates = Object.keys(byDate).sort((a, b) => b.localeCompare(a));
+
+                            const byLocation: Record<string, { hours: number; cost: number }> = {};
+                            logsWithCost.forEach(l => {
+                                const loc = l.location || '(Belirtilmemiş)';
+                                if (!byLocation[loc]) byLocation[loc] = { hours: 0, cost: 0 };
+                                byLocation[loc].hours += l.netHours;
+                                byLocation[loc].cost += l.cost;
+                            });
+                            const sortedLocations = Object.entries(byLocation).sort((a, b) => b[1].cost - a[1].cost);
+
+                            const byEmployee: Record<string, { name: string; hours: number; cost: number; rate: number }> = {};
+                            logsWithCost.forEach(l => {
+                                if (!byEmployee[l.employeeId]) byEmployee[l.employeeId] = { name: l.empName, hours: 0, cost: 0, rate: l.rate };
+                                byEmployee[l.employeeId].hours += l.netHours;
+                                byEmployee[l.employeeId].cost += l.cost;
+                            });
+                            const sortedEmployees = Object.entries(byEmployee).sort((a, b) => b[1].cost - a[1].cost);
+
+                            return (
+                                <div className="space-y-6">
+                                    {/* Header */}
+                                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-[#0e0e11] border border-zinc-800 p-4 rounded-xl">
+                                        <div>
+                                            <h3 className="font-bold text-white flex items-center gap-2">
+                                                <ArrowTrendingUpIcon className="w-5 h-5 text-emerald-400"/> Maliyet Analizi
+                                            </h3>
+                                            <p className="text-xs text-zinc-500 mt-0.5">İş yeri ve personel bazlı maliyet dağılımı</p>
+                                        </div>
+                                        <div className="flex items-center gap-3 flex-wrap">
+                                            <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1">
+                                                <button onClick={() => setCostsMonth(new Date(costsMonth.getFullYear(), costsMonth.getMonth() - 1, 1))} className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white">
+                                                    <ChevronDownIcon className="w-4 h-4 rotate-90"/>
+                                                </button>
+                                                <span className="text-sm font-mono text-white w-36 text-center">
+                                                    {costsMonth.toLocaleString('tr-TR', { month: 'long', year: 'numeric' })}
+                                                </span>
+                                                <button onClick={() => setCostsMonth(new Date(costsMonth.getFullYear(), costsMonth.getMonth() + 1, 1))} className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white">
+                                                    <ChevronRightIcon className="w-4 h-4"/>
+                                                </button>
+                                            </div>
+                                            <div className="flex bg-zinc-900 border border-zinc-700 rounded-lg p-0.5">
+                                                <button onClick={() => setCostsStatusFilter('approved')} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${costsStatusFilter === 'approved' ? 'bg-emerald-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Onaylı</button>
+                                                <button onClick={() => setCostsStatusFilter('all')} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${costsStatusFilter === 'all' ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Tümü</button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* KPI Cards */}
+                                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                                        <div className="bg-[#0e0e11] border border-zinc-800 rounded-xl p-4">
+                                            <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">Toplam Maliyet</div>
+                                            <div className="text-2xl font-mono font-bold text-emerald-400">{totalCost.toFixed(2)} €</div>
+                                            <div className="text-[10px] text-zinc-600 mt-1">{logsWithCost.length} kayıt</div>
+                                        </div>
+                                        <div className="bg-[#0e0e11] border border-zinc-800 rounded-xl p-4">
+                                            <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">Toplam Saat</div>
+                                            <div className="text-2xl font-mono font-bold text-blue-400">{totalHours.toFixed(1)} s</div>
+                                            <div className="text-[10px] text-zinc-600 mt-1">{activeDays.size} aktif gün</div>
+                                        </div>
+                                        <div className="bg-[#0e0e11] border border-zinc-800 rounded-xl p-4">
+                                            <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">Ort. Günlük Maliyet</div>
+                                            <div className="text-2xl font-mono font-bold text-yellow-400">{avgCostPerDay.toFixed(2)} €</div>
+                                            <div className="text-[10px] text-zinc-600 mt-1">günlük ortalama</div>
+                                        </div>
+                                        <div className="bg-[#0e0e11] border border-zinc-800 rounded-xl p-4">
+                                            <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">Aktif Lokasyon</div>
+                                            <div className="text-2xl font-mono font-bold text-purple-400">{activeLocations.size}</div>
+                                            <div className="text-[10px] text-zinc-600 mt-1">farklı iş yeri</div>
+                                        </div>
+                                    </div>
+
+                                    {/* Per-Location + Per-Employee */}
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                        <div className="bg-[#0e0e11] border border-zinc-800 rounded-xl p-5">
+                                            <h4 className="font-bold text-white mb-4 flex items-center gap-2 text-sm">
+                                                <span className="w-2 h-2 rounded-full bg-purple-500 inline-block"></span> İş Yeri Bazlı Maliyet
+                                            </h4>
+                                            {sortedLocations.length === 0 ? (
+                                                <p className="text-zinc-600 text-sm text-center py-6">Bu ay için kayıt yok.</p>
+                                            ) : (
+                                                <div className="space-y-3">
+                                                    {sortedLocations.map(([loc, data]) => {
+                                                        const pct = totalCost > 0 ? (data.cost / totalCost) * 100 : 0;
+                                                        return (
+                                                            <div key={loc}>
+                                                                <div className="flex justify-between items-center text-sm mb-1">
+                                                                    <span className="text-zinc-300 font-medium truncate max-w-[55%]">{loc}</span>
+                                                                    <div className="flex items-center gap-3 shrink-0">
+                                                                        <span className="text-zinc-500 text-xs">{data.hours.toFixed(1)} s</span>
+                                                                        <span className="text-emerald-400 font-mono font-bold">{data.cost.toFixed(2)} €</span>
+                                                                    </div>
+                                                                </div>
+                                                                <div className="w-full bg-zinc-800 rounded-full h-1.5">
+                                                                    <div className="bg-purple-500 h-1.5 rounded-full transition-all" style={{ width: `${pct.toFixed(1)}%` }}/>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="bg-[#0e0e11] border border-zinc-800 rounded-xl p-5">
+                                            <h4 className="font-bold text-white mb-4 flex items-center gap-2 text-sm">
+                                                <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span> Personel Bazlı Maliyet
+                                            </h4>
+                                            {sortedEmployees.length === 0 ? (
+                                                <p className="text-zinc-600 text-sm text-center py-6">Bu ay için kayıt yok.</p>
+                                            ) : (
+                                                <div className="space-y-3">
+                                                    {sortedEmployees.map(([empId, data]) => {
+                                                        const pct = totalCost > 0 ? (data.cost / totalCost) * 100 : 0;
+                                                        return (
+                                                            <div key={empId}>
+                                                                <div className="flex justify-between items-center mb-1">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <div className="w-6 h-6 rounded-full bg-zinc-700 flex items-center justify-center text-[10px] font-bold text-zinc-300">{data.name.charAt(0).toUpperCase()}</div>
+                                                                        <div>
+                                                                            <div className="text-sm text-zinc-200 font-medium leading-none">{data.name}</div>
+                                                                            <div className="text-[10px] text-zinc-600">{data.rate.toFixed(2)} €/s</div>
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="text-right shrink-0">
+                                                                        <div className="text-emerald-400 font-mono font-bold text-sm">{data.cost.toFixed(2)} €</div>
+                                                                        <div className="text-[10px] text-zinc-500">{data.hours.toFixed(1)} saat</div>
+                                                                    </div>
+                                                                </div>
+                                                                <div className="w-full bg-zinc-800 rounded-full h-1.5">
+                                                                    <div className="bg-blue-500 h-1.5 rounded-full transition-all" style={{ width: `${pct.toFixed(1)}%` }}/>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Daily Breakdown */}
+                                    <div className="bg-[#0e0e11] border border-zinc-800 rounded-xl p-5">
+                                        <h4 className="font-bold text-white mb-4 flex items-center gap-2 text-sm">
+                                            <span className="w-2 h-2 rounded-full bg-yellow-500 inline-block"></span> Günlük Maliyet Dökümü
+                                        </h4>
+                                        {sortedDates.length === 0 ? (
+                                            <p className="text-zinc-600 text-sm text-center py-6">Bu ay için kayıt yok.</p>
+                                        ) : (
+                                            <div className="space-y-2">
+                                                {sortedDates.map(date => {
+                                                    const dayLogs = byDate[date];
+                                                    const dayTotal = dayLogs.reduce((s, l) => s + l.cost, 0);
+                                                    const dayHours = dayLogs.reduce((s, l) => s + l.netHours, 0);
+                                                    const dayDate = new Date(date + 'T00:00:00');
+                                                    return (
+                                                        <details key={date} className="group">
+                                                            <summary className="flex items-center justify-between cursor-pointer list-none select-none bg-zinc-900/50 hover:bg-zinc-800/50 rounded-lg px-4 py-3 transition-colors">
+                                                                <div className="flex items-center gap-3">
+                                                                    <ChevronRightIcon className="w-4 h-4 text-zinc-500 group-open:rotate-90 transition-transform shrink-0"/>
+                                                                    <div>
+                                                                        <span className="text-white text-sm font-medium">
+                                                                            {dayDate.toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long' })}
+                                                                        </span>
+                                                                        <span className="text-zinc-500 text-xs ml-2">({dayLogs.length} kayıt · {dayHours.toFixed(1)} s)</span>
+                                                                    </div>
+                                                                </div>
+                                                                <span className="text-emerald-400 font-mono font-bold text-sm shrink-0">{dayTotal.toFixed(2)} €</span>
+                                                            </summary>
+                                                            <div className="mt-1 ml-4 border-l-2 border-zinc-800 pl-4 space-y-1 pb-2">
+                                                                {dayLogs.map(l => (
+                                                                    <div key={l.id} className="flex items-center justify-between text-sm py-1.5 border-b border-zinc-800/40 last:border-0">
+                                                                        <div className="flex items-center gap-3 min-w-0">
+                                                                            <div className="w-5 h-5 rounded-full bg-zinc-700 flex items-center justify-center text-[9px] font-bold text-zinc-300 shrink-0">{l.empName.charAt(0).toUpperCase()}</div>
+                                                                            <div className="min-w-0">
+                                                                                <div className="flex items-center gap-2 flex-wrap">
+                                                                                    <span className="text-zinc-200 font-medium">{l.empName}</span>
+                                                                                    {l.location && <span className="text-[10px] bg-purple-900/30 text-purple-400 border border-purple-800/50 px-1.5 py-0.5 rounded">{l.location}</span>}
+                                                                                </div>
+                                                                                <div className="text-[10px] text-zinc-600">{l.startTime} – {l.endTime} · {l.netHours.toFixed(1)} s · {l.rate.toFixed(2)} €/s</div>
+                                                                                {l.description && <div className="text-[10px] text-zinc-500 italic truncate max-w-xs">{l.description}</div>}
+                                                                            </div>
+                                                                        </div>
+                                                                        <div className="text-right shrink-0 ml-3">
+                                                                            <div className="text-emerald-400 font-mono font-bold">{l.cost.toFixed(2)} €</div>
+                                                                            <div className={`text-[9px] ${l.status === 'approved' ? 'text-green-500' : l.status === 'rejected' ? 'text-red-500' : 'text-yellow-500'}`}>
+                                                                                {l.status === 'approved' ? 'Onaylı' : l.status === 'rejected' ? 'Reddedildi' : 'Bekliyor'}
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </details>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })()}
 
                         {/* 3. PAYROLL TAB (WITH ADVANCE & NEW LOGIC) */}
                         {activeSalaryTab === 'payroll' && (
