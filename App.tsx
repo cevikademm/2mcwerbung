@@ -1639,7 +1639,7 @@ const App: React.FC = () => {
                                 <p className="text-sm text-zinc-500 mt-1">Çalışan saatleri, puantaj ve maaş hesaplama modülü.</p>
                             </div>
                             
-                            <div className="flex bg-zinc-900 p-1 rounded-lg border border-zinc-800">
+                            <div className="flex overflow-x-auto bg-zinc-900 p-1 rounded-lg border border-zinc-800 max-w-full">
                                 <button 
                                     onClick={() => setActiveSalaryTab('employees')}
                                     className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeSalaryTab === 'employees' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
